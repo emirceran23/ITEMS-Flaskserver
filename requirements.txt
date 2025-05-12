@@ -1,0 +1,27 @@
+# OpenCV for image processing
+opencv-python
+
+# Numerical operations
+numpy
+
+# Plotting and visualization
+matplotlib
+
+# Image processing with PIL
+Pillow
+
+# PDF report generation
+reportlab
+
+# Deep learning framework and vision utilities
+torch
+torchvision
+
+# Ultralytics YOLO implementation
+ultralytics
+
+# Instance segmentation (Detectron2)
+detectron2
+
+
+flask
