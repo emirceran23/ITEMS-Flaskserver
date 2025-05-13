@@ -1,5 +1,5 @@
 # GEREKSİZ AĞIR DOSYALAR
-*.pt
+
 *.onnx
 *.weights
 
