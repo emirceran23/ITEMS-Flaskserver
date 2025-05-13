@@ -1,0 +1,19 @@
+# GEREKSİZ AĞIR DOSYALAR
+*.pt
+*.onnx
+*.weights
+
+# GEÇİCİ DOSYALAR
+__pycache__/
+*.pyc
+*.pyo
+*.log
+
+# YEREL AYARLAR / ENV
+*.env
+*.idea/
+.vscode/
+.DS_Store
+
+# YÜKLENEN DOSYALAR
+static/uploads/*
