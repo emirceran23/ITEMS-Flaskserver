@@ -5,7 +5,7 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Set work directory
+# Set working directory
 WORKDIR /app
 
 # Install system dependencies
@@ -18,15 +18,15 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pip packages
+# Install pip dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy project
+# Copy application code
 COPY . .
 
 # Expose port
 EXPOSE 3000
 
-# Run the app
-CMD ["gunicorn", "-k", "eventlet", "-w", "1", "Server:app", "--bind", "0.0.0.0:3000"]
+# Start the application
+CMD ["gunicorn", "-k", "eventlet", "-w", "1", "server:app", "--bind", "0.0.0.0:3000"]
