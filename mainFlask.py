@@ -23,13 +23,13 @@ import numpy as np
 import copy
 import math
 import pickle
-import tkinter as tk
-from tkinter import filedialog, messagebox
-from tkinter import ttk
+
+
 from PIL import Image, ImageTk, ExifTags
 import matplotlib.pyplot as plt
 from calibratior import Calibrator
 from matplotlib.patches import Circle, Wedge
+
 import torch
 import numpy as np
 from PIL import Image as PILImage
@@ -49,7 +49,6 @@ except ImportError:
     
     print("Torchvision modülü bulunamadı! Lütfen 'pip install torchvision' komutuyla yükleyiniz.")
 from pdf_report_generator import PDFReportGenerator
-from torchvision.models.detection import maskrcnn_resnet50_fpn
 
 from io import BytesIO
 import math
@@ -411,131 +410,10 @@ def plot_deviation_polar(results, eye="Left", save_path=None):
 
 
 
-def load_mask_rcnn_model(model_path, num_classes=2):
-    """
-    Verilen model_path'teki checkpoint dosyasını yükler.
-    
-    - Eğer checkpoint, {"model": ..., "optimizer": ..., "scheduler": ...} şeklinde
-      saklanmışsa, yalnızca "model" anahtarındaki ağırlıkları kullanır.
-    - Eğer ağırlık anahtarlarının başında "module." varsa, bu ön ekler kaldırılır.
-    - GPU varsa modele GPU, yoksa CPU'ya yüklenir.
-    """
-    # Cihazı belirleyelim:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Checkpoint'i yükleyin:
-    checkpoint = torch.load(model_path, map_location=device)
-    
-    # Eğer checkpoint bir dict ve "model" anahtarını içeriyorsa, onu çıkaralım:
-    if isinstance(checkpoint, dict) and "model" in checkpoint:
-        state_dict = checkpoint["model"]
-    else:
-        state_dict = checkpoint
 
-    # Eğer ağırlık anahtarlarının başında "module." varsa, kaldırmak için:
-    new_state_dict = {}
-    for k, v in state_dict.items():
-        new_key = k
-        if k.startswith("module."):
-            new_key = k[len("module."):]
-        new_state_dict[new_key] = v
 
-    # Modeli oluşturun. (num_classes değerini eğitiminizde kullandığınız sınıf sayısına göre ayarlayın.)
-    model = maskrcnn_resnet50_fpn(weights=None, num_classes=num_classes)
-    
-    # Ağırlıkları yükleyin. strict=False kullanırsanız, eşleşmeyen anahtarlar uyarı verir ancak yüklemeye devam eder.
-    missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
-    if missing:
-        print("Eksik anahtarlar:", missing)
-    if unexpected:
-        print("Beklenmeyen anahtarlar:", unexpected)
-    
-    model.to(device)
-    model.eval()
-    return model
-def load_mask_rcnn_predictor():
-    cfg = get_cfg()
-    # Model mimarisini model zoo'dan alıyoruz (bu örnekte mask_rcnn_R_50_FPN_3x kullanılmış)
-    cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
-    # Eğitilmiş modelinizin ağırlıklarının bulunduğu yolu belirleyin:
-    cfg.OUTPUT_DIR = "./"
-    cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
-    # Test eşiğini ayarlayın (gerektiği gibi düzenleyin)
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.2
-    # Eğer modelinizde sınıf sayısı (NUM_CLASSES) farklıysa; örneğin:
-    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 3  # Örneğin Iris, Pupil, Reflection
-    # Ancak sizin eğitim kodunuzda cfg.MODEL.ROI_HEADS.NUM_CLASSES = 27 olarak ayarlanmış.
-    # Eğer segmentasyon sonuçlarını sadece belirli 3 sınıf için kullanacaksanız mapping yapmanız gerekecek.
-    cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    predictor = DefaultPredictor(cfg)
-    return predictor
 
-def segment_roi_mask_rcnn(roi_img, offset, model):
-    """
-    Mask R-CNN kullanarak ROI üzerinde segmentasyon yapar.
-    ROI görüntüsü önce tensor'a dönüştürülür.
-    """
-    transform = transforms.Compose([transforms.ToTensor()])
-    image_tensor = transform(roi_img).unsqueeze(0)
-    if torch.cuda.is_available():
-         image_tensor = image_tensor.to('cuda')
-    with torch.no_grad():
-         predictions = model(image_tensor)[0]
-    seg_dict = {}
-    score_threshold = 0.6
-    for i in range(len(predictions["scores"])):
-         if predictions["scores"][i] > score_threshold:
-             mask = predictions["masks"][i, 0].cpu().numpy()
-             mask_binary = (mask > 0.5).astype(np.uint8) * 255
-             contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-             if contours:
-                 c = max(contours, key=cv2.contourArea)
-                 pts = c.reshape(-1, 2)
-                 label = int(predictions["labels"][i].cpu().numpy())
-                 class_name = CLASS_NAMES.get(label, f"Class {label}")
-                 color = CLASS_COLORS.get(label, (255,255,255))
-                 pts[:, 0] += offset[0]
-                 pts[:, 1] += offset[1]
-                 cx, cy = compute_polygon_center(pts)
-                 seg_dict[class_name] = {"mask": pts, "center": (cx, cy)}
-    return seg_dict
-def segment_roi_maskrcnn(roi_img, offset, predictor):
-    """
-    roi_img: BGR formatında ROI görüntüsü (numpy array)
-    offset: (x_offset, y_offset) – ROI’nin orijinal görüntüdeki sol üst köşesi
-    predictor: load_mask_rcnn_predictor() tarafından dönen DefaultPredictor nesnesi
-    """
-    seg_dict = {}
-    outputs = predictor(roi_img)
-    instances = outputs["instances"].to("cpu")
-    if len(instances) == 0:
-        return seg_dict
-    scores = instances.scores.numpy()
-    pred_classes = instances.pred_classes.numpy()  # Sınıf indeksleri
-    masks = instances.pred_masks.numpy()  # (N, H, W)
-    score_threshold = 0.2
 
-    for i in range(len(scores)):
-        if scores[i] < score_threshold:
-            continue
-        # Maskeyi binary hale getirin:
-        mask_binary = (masks[i].astype(np.uint8)) * 255
-        contours, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if len(contours) == 0:
-            continue
-        c = max(contours, key=cv2.contourArea)
-        pts = c.reshape(-1, 2)
-        cls_idx = pred_classes[i]
-        if cls_idx not in mapping:
-            continue
-        class_name = mapping[cls_idx]
-        color = CLASS_COLORS.get(cls_idx, (255, 255, 255))
-        # Ofseti ekleyerek global koordinata çevirin:
-        pts[:, 0] += offset[0]
-        pts[:, 1] += offset[1]
-        cx, cy = compute_polygon_center(pts)
-        seg_dict[class_name] = {"mask": pts, "center": (cx, cy)}
-    return seg_dict
 def _draw_two_eye_diagrams(
     left_ref=(0,0),
     right_ref=(0,0),
@@ -1275,7 +1153,6 @@ def analyze_image(image_input, display_in_tk=False, segmentation_method="YOLO"):
     else:
         orig_image = image_input.copy()
     if orig_image is None:
-        messagebox.showerror("Hata", "Görüntü yüklenemedi!")
         return None
     # İşleme başlamadan önce orijinal görüntüyü saklayalım:
     image = orig_image.copy()
@@ -1289,7 +1166,8 @@ def analyze_image(image_input, display_in_tk=False, segmentation_method="YOLO"):
 
     face_results = face_mesh(image)
     if not face_results:
-        messagebox.showwarning("Uyarı", "Yüz bulunamadı! Yine de görüntü gösterilecek.")
+        print("Yüz tespit edilemedi!")
+        return None
     
     left_eye = right_eye = None
     left_roi = right_roi = None
@@ -1339,43 +1217,19 @@ def analyze_image(image_input, display_in_tk=False, segmentation_method="YOLO"):
     
     left_offset = (left_eye[0], left_eye[1])
     right_offset = (right_eye[0], right_eye[1])
-    if segmentation_method == "Mask R-CNN":
-        try:
-            predictor_maskrcnn = load_mask_rcnn_predictor()
-            left_seg_results = segment_roi_maskrcnn(left_roi, left_offset, predictor_maskrcnn)
-            right_seg_results = segment_roi_maskrcnn(right_roi, right_offset, predictor_maskrcnn)
-            for seg_dict in (left_seg_results, right_seg_results):
-                for class_name, data in seg_dict.items():
-                    pts = data["mask"]
-                    color = CLASS_COLORS.get({v: k for k, v in mapping.items()}.get(class_name, 0), (255,255,255))
-                    cv2.polylines(debug_image, [pts.reshape((-1,1,2))], True, color, 2)
-                    cx, cy = data["center"]
-                    cv2.circle(debug_image, (cx, cy), 4, color, -1)
-                    cv2.putText(debug_image, class_name, (cx, cy-10), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 4)
-            cv2.imshow("Current maskrcnnn segment status", debug_image)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-        except Exception as e:
-            messagebox.showerror("Hata", f"Mask R-CNN modeli yüklenemedi: {e}")
-            print("Mask R-CNN modeli yüklenemedi:", e)
-            return debug_image
-        #left_seg_results = segment_roi_mask_rcnn(left_roi, left_offset, mask_rcnn_model)
-        #right_seg_results = segment_roi_mask_rcnn(right_roi, right_offset, mask_rcnn_model)
-    else:
-        # Varsayılan olarak YOLO ile segmentasyon
-        try:
-            yolo_model = YOLO("best_xlarge.pt")
-            print("1")
-            yolo_model.export(format="onnx", opset=12)
-            print("2")
-            yolo_model.fuse()
-            print("3")
-            if torch.cuda.is_available():
-                yolo_model.to('cuda')
-                print(f"Using GPU: {torch.cuda.get_device_name(0)}")
-        except Exception as e:
-            messagebox.showerror("Hata", f"YOLO model yüklenemedi: {e}")
-            return debug_image
+    
+    try:
+        yolo_model = YOLO("best_xlarge.pt")
+        print("1")
+        yolo_model.export(format="onnx", opset=12)
+        print("2")
+        yolo_model.fuse()
+        print("3")
+        if torch.cuda.is_available():
+            yolo_model.to('cuda')
+            print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+    except Exception as e:
+        return debug_image
     
     def segment_roi(roi_img, offset):
         seg_dict = {}
@@ -1875,71 +1729,10 @@ def analyze_image(image_input, display_in_tk=False, segmentation_method="YOLO"):
         }
 
 
-    def display_pinhole_strabismus_results(pinhole_results):
-        """
-        Pinhole strabismus tespit sonuçlarını ayrı bir Tkinter penceresinde metin olarak görüntüler.
-        """
-        import tkinter as tk
-        from tkinter import ttk
+    
 
-        result_window = tk.Toplevel()
-        result_window.title("Pinhole Strabismus Sonuçları")
-
-        text = ""
-        if pinhole_results:
-            ipd = pinhole_results.get("real_ipd_mm")
-            left_h_angle = pinhole_results.get("left_h_angle_deg")
-            left_v_angle = pinhole_results.get("left_v_angle_deg")
-            right_h_angle = pinhole_results.get("right_h_angle_deg")
-            right_v_angle = pinhole_results.get("right_v_angle_deg")
-            #left_angle = math.sqrt(left_h_angle**2 + left_v_angle**2)
-            #right_angle = math.sqrt(right_h_angle**2 + right_v_angle**2)
-            left_PD = pinhole_results.get("left_PD")
-            right_PD = pinhole_results.get("right_PD")
-            left_angle=left_PD*0.57
-            right_angle = right_PD*0.57
-            left_deviation_magnitude = pinhole_results.get("left_deviation_magnitude")
-            right_deviation_magnitude = pinhole_results.get("right_deviation_magnitude")
-            left_dev_in_PD=15*left_deviation_magnitude
-            right_dev_in_PD=15*right_deviation_magnitude
-
-            left_deviation_classification = pinhole_results.get("left_classification")
-            right_deviation_classification = pinhole_results.get("right_classification")
-            
-            if ipd is not None:
-                text += f"Gerçek IPD: {ipd:.2f} mm\n"
-            else:
-                text += "Gerçek IPD: N/A\n"
-            if left_angle is not None:
-                text += f"Sağ Göz Şaşılık Açısı: {left_angle:.2f}°\n"
-                text += f"Sağ Göz Şaşılık Sınıflandırma: {left_deviation_classification}\n"
-            else:
-                text += "Sağ Göz Şaşılık Açısı: N/A\n"
-            if right_angle is not None:
-                text += f"Sol Göz Şaşılık Açısı: {right_angle:.2f}°\n"
-                text += f"Sol Göz Şaşılık Sınıflandırma: {right_deviation_classification}\n"
-            else:
-                text += "Sol Göz Şaşılık Açısı: N/A\n"
-            if left_deviation_magnitude is not None:
-                text += f"Sağ Göz Sapma Büyüklüğü: {left_deviation_magnitude:.2f} mm\n"
-                text += f"Sağ Göz Sapma Büyüklüğü (PD): {left_dev_in_PD:.2f} PD\n"
-            else:
-                text += "Sağ Göz Sapma Büyüklüğü: N/A\n"
-            if right_deviation_magnitude is not None:
-                text += f"Sol Göz Sapma Büyüklüğü: {right_deviation_magnitude:.2f} mm\n"
-                text += f"Sol Göz Sapma Büyüklüğü (PD): {right_dev_in_PD:.2f} PD\n"
-            else:
-                text += "Sol Göz Sapma Büyüklüğü: N/A\n"
-            
-            
-        else:
-            text = "Pinhole strabismus sonuçları mevcut değil."
-
-        label = ttk.Label(result_window, text=text, font=("Helvetica", 14))
-        label.pack(padx=20, pady=20)
-
-        close_btn = ttk.Button(result_window, text="Kapat", command=result_window.destroy)
-        close_btn.pack(pady=10)
+        
+        
 
 
     # Open the image file and extract EXIF data
@@ -1987,7 +1780,6 @@ def analyze_image(image_input, display_in_tk=False, segmentation_method="YOLO"):
         )
     average_depth = (left_iris_depth_cm+right_iris_depth_cm)/2
     
-    display_pinhole_strabismus_results(pinhole_strabismus_results)
     # Diğer çizim işlemleriniz bittikten sonra
 
     left_roi_with_guidelines = draw_clinical_guidelines(orig_image,left_roi.copy(), ref_center=left_iris_center_local, focal_length=focal, calibration_data=calibration_data,iris_depth_mm=left_iris_depth_cm)
@@ -2054,185 +1846,6 @@ def analyze_image(image_input, display_in_tk=False, segmentation_method="YOLO"):
     window_height = int(debug_image.shape[0] * scale)
     resized_image = cv2.resize(debug_image, (window_width, window_height))
 
-    if display_in_tk:
-        cv2.imshow("Iris, Pupil Segmentasyonu ve Head Pose Analizi (YOLO)", resized_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        return results_dict
-    else:
-        cv2.imshow("Iris, Pupil Segmentasyonu ve Head Pose Analizi (YOLO)", resized_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        return results_dict
+    
 
 
-# ----------------------------------------------------------------------
-# TKINTER ARAYÜZÜ
-# ----------------------------------------------------------------------
-class Application(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Iris, Strabismus, Pupil Segmentasyonu ve Head Pose Analizi (YOLO)")
-        self.geometry("1100x700")
-        self.current_dir = os.getcwd()
-        self.image_list = list_images_in_directory(self.current_dir)
-        self.selected_image_path = None
-        self.create_widgets()
-
-    def on_create_report(self):
-        if self.selected_image_path:
-            segmentation_method = self.segmentation_method_var.get()
-            results = analyze_image(self.selected_image_path, display_in_tk=True, segmentation_method=segmentation_method)
-            if results is not None:
-                # Örneğin, plot_deviation_polar fonksiyonunu kullanarak sol ve sağ göz polar grafiklerini dosyaya kaydediyoruz:
-                results["detailed_analysis_image"] = plot_detailed_analysis_matplotlib(results)
-                results["centers_analysis_image"] = plot_centers_analysis_matplotlib(results)
-                results["roi_angles_image"] = plot_roi_with_angles(results)
-                results["deviation_polar_left"] = plot_deviation_polar(results, eye="Left")
-                results["deviation_polar_right"] = plot_deviation_polar(results, eye="Right")
-                
-                # Diğer grafikler de benzer şekilde (eğer isterseniz)
-                # results["detailed_analysis_image"] = save_detailed_analysis_figure(results)
-                # results["centers_analysis_image"] = save_centers_analysis_figure(results)
-                # results["roi_angles_image"] = save_roi_with_angles_figure(results)
-                
-                # PDF raporu oluştur ve kaydet
-                report_generator = PDFReportGenerator()
-                output_pdf = "analiz_raporu.pdf"  # İstediğiniz dosya yolunu belirleyin
-                report_generator.generate_report(results, output_path=output_pdf)
-                messagebox.showinfo("Bilgi", f"PDF raporu oluşturuldu: {output_pdf}")
-        else:
-            messagebox.showwarning("Uyarı", "Lütfen önce bir resim seçiniz!")
-
-
-
-
-
-    def create_widgets(self):
-        top_frame = tk.Frame(self)
-        top_frame.pack(pady=5)
-        dir_btn = tk.Button(top_frame, text="Klasör Seç", command=self.on_select_directory, width=15)
-        dir_btn.pack(side=tk.LEFT, padx=5)
-        current_dir_label = tk.Label(top_frame, text=f"Mevcut Klasör: {self.current_dir}", wraplength=600)
-        current_dir_label.pack(side=tk.LEFT, padx=5)
-        self.current_dir_label = current_dir_label
-
-        # Yeni: Segmentasyon Yöntemi seçimi (YOLO / Mask R-CNN)
-        method_frame = tk.Frame(top_frame)
-        method_frame.pack(side=tk.LEFT, padx=20)
-        method_label = tk.Label(method_frame, text="Segmentasyon Yöntemi:")
-        method_label.pack(side=tk.LEFT)
-        self.segmentation_method_var = tk.StringVar(value="YOLO")
-        yolo_rb = tk.Radiobutton(method_frame, text="YOLO", variable=self.segmentation_method_var, value="YOLO")
-        maskrcnn_rb = tk.Radiobutton(method_frame, text="Mask R-CNN", variable=self.segmentation_method_var, value="Mask R-CNN")
-        yolo_rb.pack(side=tk.LEFT, padx=5)
-        maskrcnn_rb.pack(side=tk.LEFT, padx=5)
-
-        left_frame = tk.Frame(self)
-        left_frame.pack(side=tk.LEFT, padx=10, pady=10, fill=tk.Y)
-        list_label = tk.Label(left_frame, text="Resim Listesi:")
-        list_label.pack()
-        self.listbox = tk.Listbox(left_frame, width=40, height=25)
-        self.listbox.pack(side=tk.LEFT, fill=tk.Y)
-        self.listbox.bind("<<ListboxSelect>>", self.on_listbox_select)
-        scrollbar = tk.Scrollbar(left_frame, orient="vertical")
-        scrollbar.config(command=self.listbox.yview)
-        scrollbar.pack(side=tk.RIGHT, fill="y")
-        self.listbox.config(yscrollcommand=scrollbar.set)
-        self.update_listbox()
-
-        right_frame = tk.Frame(self)
-        right_frame.pack(side=tk.RIGHT, padx=10, pady=10)
-        self.image_label = tk.Label(right_frame)
-        self.image_label.pack()
-
-        bottom_frame = tk.Frame(self)
-        bottom_frame.pack(pady=10)
-        analyze_btn = tk.Button(bottom_frame, text="Analiz Et", command=self.on_analyze, width=15, height=2)
-        analyze_btn.pack(side=tk.LEFT, padx=10)
-        calibrate_btn = tk.Button(bottom_frame, text="Kalibre Et", command=self.on_calibrate, width=15, height=2)
-        calibrate_btn.pack(side=tk.LEFT, padx=10)
-        report_btn = tk.Button(bottom_frame, text="Rapor Oluştur", command=self.on_create_report, width=15, height=2)
-        report_btn.pack(side=tk.LEFT, padx=10)
-
-    def update_listbox(self):
-        self.listbox.delete(0, tk.END)
-        for img in self.image_list:
-            self.listbox.insert(tk.END, img)
-
-    def on_select_directory(self):
-        dir_selected = filedialog.askdirectory(initialdir=self.current_dir, title="Klasör Seç")
-        if dir_selected:
-            self.current_dir = dir_selected
-            self.image_list = list_images_in_directory(self.current_dir)
-            self.current_dir_label.config(text=f"Mevcut Klasör: {self.current_dir}")
-            self.update_listbox()
-            self.image_label.config(image="")
-            self.selected_image_path = None
-
-    def on_listbox_select(self, event):
-        selection = self.listbox.curselection()
-        if selection:
-            index = selection[0]
-            filename = self.listbox.get(index)
-            self.selected_image_path = os.path.join(self.current_dir, filename)
-            try:
-                pil_image = Image.open(self.selected_image_path)
-                pil_image.thumbnail((400,400))
-                self.tk_image = ImageTk.PhotoImage(pil_image)
-                self.image_label.config(image=self.tk_image)
-                self.image_label.image = self.tk_image
-            except Exception as e:
-                messagebox.showerror("Hata", f"Resim yüklenemedi: {e}")
-
-
-
-
-    def update_image_label(self, debug_image):
-        rgb_image = cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(rgb_image)
-        pil_image.thumbnail((400,400))
-        self.tk_image = ImageTk.PhotoImage(pil_image)
-        self.image_label.config(image=self.tk_image)
-        self.image_label.image = self.tk_image
-
-    def on_analyze(self):
-        if self.selected_image_path:
-            segmentation_method = self.segmentation_method_var.get()
-            results = analyze_image(self.selected_image_path, display_in_tk=True, segmentation_method=segmentation_method)
-            if results is not None:
-                self.update_image_label(results["debug_image"])
-                # İsteğe bağlı diğer analiz panellerini de çağırabilirsiniz:
-                plot_detailed_analysis_matplotlib(results)
-                plot_centers_analysis_matplotlib(results)
-                plot_roi_with_angles(results)
-                plot_deviation_polar(results, eye="Left")
-                plot_deviation_polar(results, eye="Right")
-        else:
-            messagebox.showwarning("Uyarı", "Lütfen önce bir resim seçiniz!")
-
-    def on_calibrate(self):
-        if self.selected_image_path:
-            calibrator = Calibrator()
-            
-            undistorted_image = calibrator.calibrate(self.selected_image_path, self.current_dir)
-            processed_results = analyze_image(undistorted_image, display_in_tk=True)
-            processed= processed_results["debug_image"] if processed_results else None
-            if processed is not None:
-                self.update_image_label(processed)
-        else:
-            messagebox.showwarning("Uyarı", "Lütfen önce bir resim seçiniz!")
-
-def list_images_in_directory(directory, extensions=(".jpg", ".jpeg", ".png")):
-    return [f for f in os.listdir(directory) if f.lower().endswith(extensions)]
-
-def main():
-    app = Application()
-    app.mainloop()
-
-if __name__ == "__main__":
-    main()
-
-
-# ----------------------------------------------------------------------
-# SON

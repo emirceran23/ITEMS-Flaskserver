@@ -11,9 +11,9 @@ from pdf_report_generator import PDFReportGenerator  # your report generator mod
 from flask import jsonify
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*")
 app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*")
 UPLOAD_FOLDER = os.path.join('static', 'uploads')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -263,7 +263,36 @@ def handle_endTest():
     print(f"Test finished for user {mobileUserId} in room {roomCode} with total score {totalScore}")
     clearRoomData(roomCode)
     resetUserProgress(roomCode, mobileUserId)
+#strabismus
+@socketio.on('detectStrabismus')
+def handle_detectStrabismus(imageBytes):
+    sid = request.sid
+    print(f"Detect strabismus event received from {sid}")
+    image_data = base64.b64decode(imageBytes)
+    np_image = np.frombuffer(image_data, np.uint8)
+    image = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
 
+    # Run your analysis function (make sure it works in web mode)
+    results = analyze_image(image, display_in_tk=False, segmentation_method="YOLO")
+
+    # Save debug image
+    debug_filename = "debug_" + str(sid) + ".jpg"
+    debug_filepath = os.path.join(app.config['UPLOAD_FOLDER'], debug_filename)
+    cv2.imwrite(debug_filepath, results["debug_image"])
+
+    # Generate PDF report
+    pdf_filename = "report_" + str(sid) + ".pdf"
+    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], pdf_filename)
+    report_generator = PDFReportGenerator()
+    report_generator.generate_report(results, output_path=pdf_path)
+
+    # Return URLs
+    debug_url = url_for('uploaded_file', filename=debug_filename, _external=True)
+    pdf_url = url_for('uploaded_file', filename=pdf_filename, _external=True)
+    emit('strabismusResult', {
+        'debug_image_url': debug_url,
+        'pdf_url': pdf_url
+    }, room=sid)
 # Miscellaneous events
 @socketio.on('allZero')
 def handle_allZero(data):
@@ -603,4 +632,5 @@ def uploaded_file(filename):
 
 
 if __name__ == '__main__':
-    socketio.run(app, port=3000, debug=True)
+    port = int(os.environ.get('PORT', 3000))
+    socketio.run(app, host='0.0.0.0', port=port, debug=True)
