@@ -4,6 +4,7 @@ FROM python:3.9-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
+ENV PORT 8080
 
 # Set working directory
 WORKDIR /app
@@ -28,5 +29,5 @@ COPY . .
 # Expose port
 EXPOSE 8080
 
-# Start the application
-CMD ["python", "app.py"]
+# Start the application with gunicorn
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app

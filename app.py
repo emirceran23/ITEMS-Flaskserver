@@ -1,11 +1,15 @@
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, flash
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory, flash, jsonify
+from flask_socketio import SocketIO
 import os
 from werkzeug.utils import secure_filename
 from mainFlask import analyze_image  # your analysis function
 from pdf_report_generator import PDFReportGenerator  # your report generator module
+import cv2
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'
+socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = 'secret!'
+
 UPLOAD_FOLDER = os.path.join('static', 'uploads')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -13,49 +17,42 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    if request.method == 'POST':
-        if 'image' not in request.files:
-            flash('No file part')
-            return redirect(request.url)
-        file = request.files['image']
-        if file.filename == '':
-            flash('No selected file')
-            return redirect(request.url)
-        if file:
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-            
-            # Check if the user requested a PDF report
-            generate_report_flag = request.form.get("generate_report") == "yes"
-            
-            # Run your analysis function (make sure it works in web mode)
-            results = analyze_image(filepath, display_in_tk=False, segmentation_method="YOLO")
-            
-            # Save the debug image output (or any representative image) to the uploads folder
-            debug_filename = "debug_" + filename
-            debug_filepath = os.path.join(app.config['UPLOAD_FOLDER'], debug_filename)
-            # Assuming results["debug_image"] is a valid OpenCV image:
-            import cv2
-            cv2.imwrite(debug_filepath, results["debug_image"])
-            
-            # If report generation was requested:
-            report_filename = None
-            if generate_report_flag:
-                pdf_report_path = os.path.join(app.config['UPLOAD_FOLDER'], "report_" + filename.split('.')[0] + ".pdf")
-                report_generator = PDFReportGenerator()
-                report_generator.generate_report(results, output_path=pdf_report_path)
-                report_filename = os.path.basename(pdf_report_path)
-            
-            # Redirect to a results page with both image and (optionally) report
-            return redirect(url_for('result', debug_filename=debug_filename, report_filename=report_filename))
-    return render_template('index.html')
+    return "Server is running."
 
-@app.route('/result')
-def result():
-    debug_filename = request.args.get("debug_filename")
-    report_filename = request.args.get("report_filename")
-    return render_template('result.html', debug_filename=debug_filename, report_filename=report_filename)
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image uploaded'}), 400
+
+    file = request.files['image']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+
+    # Run analysis
+    results = analyze_image(filepath, display_in_tk=False, segmentation_method="YOLO")
+
+    # Save debug image
+    debug_filename = "debug_" + filename
+    debug_filepath = os.path.join(app.config['UPLOAD_FOLDER'], debug_filename)
+    cv2.imwrite(debug_filepath, results["debug_image"])
+
+    # Generate PDF report
+    pdf_filename = "report_" + os.path.splitext(filename)[0] + ".pdf"
+    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], pdf_filename)
+    report_generator = PDFReportGenerator()
+    report_generator.generate_report(results, output_path=pdf_path)
+
+    # Return URLs
+    debug_url = url_for('uploaded_file', filename=debug_filename, _external=True)
+    pdf_url = url_for('uploaded_file', filename=pdf_filename, _external=True)
+    return jsonify({
+        'debug_image_url': debug_url,
+        'pdf_url': pdf_url
+    })
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
@@ -63,4 +60,4 @@ def uploaded_file(filename):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    socketio.run(app, host='0.0.0.0', port=port, debug=True)
