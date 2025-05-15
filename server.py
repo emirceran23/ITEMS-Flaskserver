@@ -9,6 +9,8 @@ from werkzeug.utils import secure_filename
 from mainFlask import analyze_image  # your analysis function
 from pdf_report_generator import PDFReportGenerator  # your report generator module
 from flask import jsonify
+import eventlet
+eventlet.monkey_patch()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'

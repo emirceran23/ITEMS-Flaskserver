@@ -32,4 +32,5 @@ COPY . .
 EXPOSE 8080
 
 # Start the application with gunicorn
-CMD exec gunicorn --worker-class eventlet -w 1 --bind :$PORT server:app
+# Start the application with gunicorn (exec-form)
+CMD ["gunicorn", "-k", "eventlet", "-w", "1", "-b", "0.0.0.0:8080", "server:app"]
