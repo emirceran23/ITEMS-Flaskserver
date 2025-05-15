@@ -11,7 +11,6 @@ from pdf_report_generator import PDFReportGenerator  # your report generator mod
 from flask import jsonify
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
 app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, cors_allowed_origins="*")
 UPLOAD_FOLDER = os.path.join('static', 'uploads')

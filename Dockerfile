@@ -32,4 +32,4 @@ COPY . .
 EXPOSE 8080
 
 # Start the application with gunicorn
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
+CMD exec gunicorn --worker-class eventlet -w 1 --bind :$PORT server:app
