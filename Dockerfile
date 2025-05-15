@@ -1,5 +1,5 @@
 # Use an official Python base image
-FROM python:3.10-slim
+FROM python:3.9-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
@@ -20,13 +20,13 @@ RUN apt-get update && apt-get install -y \
 
 # Install pip dependencies
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
 # Expose port
-EXPOSE 3000
+EXPOSE 8080
 
 # Start the application
-CMD ["gunicorn", "-k", "eventlet", "-w", "1", "server:app", "--bind", "0.0.0.0:3000"]
+CMD ["python", "app.py"]
