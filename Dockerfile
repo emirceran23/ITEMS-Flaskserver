@@ -47,4 +47,4 @@ COPY . .
 EXPOSE 8080
 
 # Start the application with gunicorn using shell form for proper env var expansion
-CMD ["sh", "-c", "gunicorn -k eventlet -w 1 -b 0.0.0.0:${PORT:-8080} server:app"]
+CMD ["python", "server.py"]
